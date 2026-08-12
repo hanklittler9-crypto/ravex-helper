@@ -13,7 +13,8 @@ const {
 const { ensureDataFiles, getGuildConfig, getTicketByChannel, getOpenTicketForUser } = require('./storage');
 const { commands } = require('./commands');
 const { deployCommands } = require('./deploy-commands');
-const { sendWelcome, openTicket, closeTicket, claimTicket, brandEmbed, BRAND } = require('./tickets');
+const { openTicket, closeTicket, claimTicket, brandEmbed, BRAND } = require('./tickets');
+const { sendWelcome, sendLeave, handleWelcomeInteraction } = require('./welcome');
 
 ensureDataFiles();
 
@@ -78,8 +79,18 @@ client.on(Events.GuildMemberAdd, async (member) => {
   }
 });
 
+client.on(Events.GuildMemberRemove, async (member) => {
+  try {
+    await sendLeave(member);
+  } catch (err) {
+    console.error('Leave error:', err);
+  }
+});
+
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    if (await handleWelcomeInteraction(interaction)) return;
+
     if (interaction.isChatInputCommand()) {
       const command = client.commands.get(interaction.commandName);
       if (!command) return;

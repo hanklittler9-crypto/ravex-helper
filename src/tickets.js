@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits } = require('discord.js');
 const {
   getGuildConfig,
   setGuildConfig,
@@ -8,41 +8,7 @@ const {
   deleteTicket,
   getTicketByChannel,
 } = require('./storage');
-
-const BRAND = {
-  name: 'Ravex Helper',
-  color: 0x5b8def,
-  footer: 'Ravex Helper',
-};
-
-function brandEmbed() {
-  return new EmbedBuilder().setColor(BRAND.color).setFooter({ text: BRAND.footer });
-}
-
-function formatWelcome(template, member) {
-  return template
-    .replaceAll('{user}', `<@${member.id}>`)
-    .replaceAll('{username}', member.user.username)
-    .replaceAll('{server}', member.guild.name)
-    .replaceAll('{count}', String(member.guild.memberCount));
-}
-
-async function sendWelcome(member) {
-  const config = getGuildConfig(member.guild.id);
-  if (!config.welcomeChannelId) return;
-
-  const channel = await member.guild.channels.fetch(config.welcomeChannelId).catch(() => null);
-  if (!channel?.isTextBased()) return;
-
-  const text = formatWelcome(config.welcomeMessage, member);
-  const embed = brandEmbed()
-    .setTitle(`Welcome to ${member.guild.name}`)
-    .setDescription(text)
-    .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
-    .setTimestamp();
-
-  await channel.send({ content: `<@${member.id}>`, embeds: [embed] });
-}
+const { BRAND, brandEmbed } = require('./welcome');
 
 function ticketPanelEmbed() {
   return brandEmbed()
@@ -320,12 +286,10 @@ async function claimTicket(channel, claimer) {
 module.exports = {
   BRAND,
   brandEmbed,
-  sendWelcome,
   ticketPanelEmbed,
   ticketPanelRow,
   ensureTicketInfrastructure,
   openTicket,
   closeTicket,
   claimTicket,
-  formatWelcome,
 };

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { DEFAULT_WELCOME, normalizeWelcome } = require('./welcomeDefaults');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const GUILD_CONFIG_PATH = path.join(DATA_DIR, 'guild-config.json');
@@ -21,23 +22,32 @@ function writeJson(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
+function defaultGuildConfig() {
+  return {
+    welcome: { ...DEFAULT_WELCOME },
+    welcomeChannelId: null,
+    welcomeMessage: DEFAULT_WELCOME.description,
+    ticketCategoryId: null,
+    ticketLogChannelId: null,
+    supportRoleId: null,
+    ticketCounter: 0,
+  };
+}
+
 function getGuildConfig(guildId) {
   const all = readJson(GUILD_CONFIG_PATH);
-  return (
-    all[guildId] || {
-      welcomeChannelId: null,
-      welcomeMessage: 'Welcome to **{server}**, {user}! You are member **#{count}**.',
-      ticketCategoryId: null,
-      ticketLogChannelId: null,
-      supportRoleId: null,
-      ticketCounter: 0,
-    }
-  );
+  const raw = all[guildId] || {};
+  const base = { ...defaultGuildConfig(), ...raw };
+  base.welcome = normalizeWelcome(raw.welcome || raw);
+  return base;
 }
 
 function setGuildConfig(guildId, patch) {
   const all = readJson(GUILD_CONFIG_PATH);
-  all[guildId] = { ...getGuildConfig(guildId), ...patch };
+  const current = getGuildConfig(guildId);
+  const next = { ...current, ...patch };
+  if (patch.welcome) next.welcome = normalizeWelcome({ ...current.welcome, ...patch.welcome });
+  all[guildId] = next;
   writeJson(GUILD_CONFIG_PATH, all);
   return all[guildId];
 }
