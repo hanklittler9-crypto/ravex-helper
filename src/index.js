@@ -12,6 +12,7 @@ const {
 } = require('discord.js');
 const { ensureDataFiles, getGuildConfig, getTicketByChannel, getOpenTicketForUser } = require('./storage');
 const { commands } = require('./commands');
+const { deployCommands } = require('./deploy-commands');
 const { sendWelcome, openTicket, closeTicket, claimTicket, brandEmbed, BRAND } = require('./tickets');
 
 ensureDataFiles();
@@ -49,9 +50,24 @@ for (const command of commands) {
   client.commands.set(command.data.name, command);
 }
 
-client.once(Events.ClientReady, (c) => {
+client.once(Events.ClientReady, async (c) => {
   console.log(`${BRAND.name} online as ${c.user.tag}`);
   c.user.setActivity('tickets & welcomes', { type: ActivityType.Watching });
+
+  try {
+    const clientId = process.env.CLIENT_ID || c.user.id;
+    if (process.env.GUILD_ID) {
+      await deployCommands({ token, clientId, guildId: process.env.GUILD_ID });
+    } else if (c.guilds.cache.size > 0) {
+      for (const guild of c.guilds.cache.values()) {
+        await deployCommands({ token, clientId, guildId: guild.id });
+      }
+    } else {
+      await deployCommands({ token, clientId, guildId: null });
+    }
+  } catch (err) {
+    console.error('Failed to register slash commands:', err);
+  }
 });
 
 client.on(Events.GuildMemberAdd, async (member) => {
