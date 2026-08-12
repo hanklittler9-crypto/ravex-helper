@@ -15,6 +15,7 @@ const {
 } = require('discord.js');
 const { getGuildConfig, setGuildConfig } = require('./storage');
 const { DEFAULT_WELCOME, normalizeWelcome } = require('./welcomeDefaults');
+const { buildWelcomeCardAttachment, DEFAULT_CARD } = require('./welcomeCard');
 
 const BRAND = { name: 'Ravex Helper', color: 0x5b8def, footer: 'Ravex Helper' };
 
@@ -115,9 +116,12 @@ function buildWelcomeEmbed(member, welcome, { leave = false } = {}) {
 
   if (!leave) {
     if (w.title) embed.setTitle(formatTemplate(w.title, member, w).slice(0, 256));
-    const thumb = resolveIcon(w.thumbnail, w.thumbnailUrl, member);
-    if (thumb) embed.setThumbnail(thumb);
-    if (w.imageUrl) embed.setImage(w.imageUrl);
+    // When welcome card is on, skip thumbnail so the banner+avatar is the focus
+    if (!w.cardEnabled) {
+      const thumb = resolveIcon(w.thumbnail, w.thumbnailUrl, member);
+      if (thumb) embed.setThumbnail(thumb);
+    }
+    if (w.imageUrl && !w.cardEnabled) embed.setImage(w.imageUrl);
     if (w.authorText) {
       const iconURL = resolveIcon(w.authorIcon, w.authorIconUrl, member);
       embed.setAuthor({ name: formatTemplate(w.authorText, member, w).slice(0, 256), ...(iconURL ? { iconURL } : {}) });
@@ -149,7 +153,7 @@ function buildWelcomeEmbed(member, welcome, { leave = false } = {}) {
   return embed;
 }
 
-function buildWelcomePayload(member, welcome, { leave = false } = {}) {
+async function buildWelcomePayload(member, welcome, { leave = false } = {}) {
   const w = normalizeWelcome(welcome);
   const useEmbed = leave ? w.leaveUseEmbed !== false : w.useEmbed !== false;
   const payload = { allowedMentions: { parse: ['users'] } };
@@ -165,8 +169,28 @@ function buildWelcomePayload(member, welcome, { leave = false } = {}) {
   if (w.message) parts.push(formatTemplate(w.message, member, w));
   if (parts.length) payload.content = parts.join(' ').slice(0, 2000);
 
-  if (useEmbed) payload.embeds = [buildWelcomeEmbed(member, w)];
-  else if (!payload.content) {
+  if (useEmbed) {
+    const embed = buildWelcomeEmbed(member, w);
+    if (w.cardEnabled) {
+      try {
+        const file = await buildWelcomeCardAttachment(member, {
+          enabled: true,
+          x: w.cardX,
+          y: w.cardY,
+          size: w.cardSize,
+          borderColor: w.cardBorderColor,
+          borderWidth: w.cardBorderWidth,
+          showName: w.cardShowName,
+        });
+        payload.files = [file];
+        embed.setImage('attachment://ravex-welcome.png');
+      } catch (err) {
+        console.error('Welcome card render failed:', err);
+        if (w.imageUrl) embed.setImage(w.imageUrl);
+      }
+    }
+    payload.embeds = [embed];
+  } else if (!payload.content) {
     payload.content = formatTemplate(pickDescription(w), member, w).slice(0, 2000);
   }
   return payload;
@@ -193,7 +217,7 @@ async function sendWelcome(member) {
   if (welcome.channelId) {
     const channel = await member.guild.channels.fetch(welcome.channelId).catch(() => null);
     if (channel?.isTextBased()) {
-      await channel.send(buildWelcomePayload(member, welcome));
+      await channel.send(await buildWelcomePayload(member, welcome));
     }
   }
 
@@ -205,8 +229,9 @@ async function sendWelcome(member) {
       message: '',
       description: welcome.dmMessage,
       messages: [],
+      cardEnabled: false,
     };
-    await member.user.send(buildWelcomePayload(member, dmWelcome)).catch(() => null);
+    await member.user.send(await buildWelcomePayload(member, dmWelcome)).catch(() => null);
   }
 }
 
@@ -215,7 +240,7 @@ async function sendLeave(member) {
   if (!welcome.leaveEnabled || !welcome.leaveChannelId) return;
   const channel = await member.guild.channels.fetch(welcome.leaveChannelId).catch(() => null);
   if (!channel?.isTextBased()) return;
-  await channel.send(buildWelcomePayload(member, welcome, { leave: true }));
+  await channel.send(await buildWelcomePayload(member, welcome, { leave: true }));
 }
 
 function statusEmbed(guild, welcome) {
@@ -255,6 +280,7 @@ function statusEmbed(guild, welcome) {
           `Thumbnail: \`${w.thumbnail}\``,
           `Image: ${w.imageUrl ? 'set' : 'none'}`,
           `Timestamp: **${w.showTimestamp ? 'yes' : 'no'}**`,
+          `Welcome card: **${w.cardEnabled ? 'on' : 'off'}** (avatar circle)`,
         ].join('\n'),
       }
     );
@@ -271,7 +297,7 @@ function studioComponents() {
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('welcome_preview').setLabel('Preview here').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('welcome_test').setLabel('Send to channel').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId('welcome_variables').setLabel('Variables').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('welcome_edit_card').setLabel('Card image').setStyle(ButtonStyle.Primary).setEmoji('🖼️'),
     new ButtonBuilder().setCustomId('welcome_toggle').setLabel('Enable/Disable').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId('welcome_refresh').setLabel('Refresh').setStyle(ButtonStyle.Secondary)
   );
@@ -299,7 +325,8 @@ function studioComponents() {
         new StringSelectMenuOptionBuilder().setLabel('Toggle embed mode').setValue('embed'),
         new StringSelectMenuOptionBuilder().setLabel('Toggle timestamp').setValue('timestamp'),
         new StringSelectMenuOptionBuilder().setLabel('Toggle DM welcome').setValue('dm'),
-        new StringSelectMenuOptionBuilder().setLabel('Toggle leave messages').setValue('leave')
+        new StringSelectMenuOptionBuilder().setLabel('Toggle leave messages').setValue('leave'),
+        new StringSelectMenuOptionBuilder().setLabel('Toggle welcome card image').setValue('card')
       )
   );
   return [row1, row2, row3, row4, row5];
@@ -557,6 +584,58 @@ function leaveModal(welcome) {
   return modal;
 }
 
+function cardModal(welcome) {
+  const modal = new ModalBuilder().setCustomId('welcome_modal_card').setTitle('Welcome card image');
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('cardEnabled')
+        .setLabel('Enable card image? yes / no')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(3)
+        .setValue(welcome.cardEnabled !== false ? 'yes' : 'no')
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('cardPos')
+        .setLabel('Avatar position X% Y% (e.g. 82 58)')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(20)
+        .setValue(`${welcome.cardX ?? DEFAULT_CARD.x} ${welcome.cardY ?? DEFAULT_CARD.y}`)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('cardSize')
+        .setLabel('Circle size (% of banner height)')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(5)
+        .setValue(String(welcome.cardSize ?? DEFAULT_CARD.size))
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('cardBorderColor')
+        .setLabel('Ring color (#hex)')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(7)
+        .setValue((welcome.cardBorderColor || DEFAULT_CARD.borderColor).slice(0, 7))
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('cardShowName')
+        .setLabel('Show username under circle? yes / no')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setMaxLength(3)
+        .setValue(welcome.cardShowName !== false ? 'yes' : 'no')
+    )
+  );
+  return modal;
+}
+
 function yes(value) {
   return ['yes', 'y', 'true', 'on', '1'].includes(String(value || '').trim().toLowerCase());
 }
@@ -613,8 +692,8 @@ async function handleWelcomeInteraction(interaction) {
       await interaction.showModal(leaveModal(welcome));
       return true;
     }
-    if (id === 'welcome_variables') {
-      await interaction.reply({ embeds: [variablesEmbed()], ephemeral: true });
+    if (id === 'welcome_edit_card') {
+      await interaction.showModal(cardModal(welcome));
       return true;
     }
     if (id === 'welcome_toggle') {
@@ -627,8 +706,9 @@ async function handleWelcomeInteraction(interaction) {
       return true;
     }
     if (id === 'welcome_preview') {
-      const payload = buildWelcomePayload(interaction.member, getWelcome(interaction.guild.id));
-      await interaction.reply({ ...payload, ephemeral: true });
+      await interaction.deferReply({ ephemeral: true });
+      const payload = await buildWelcomePayload(interaction.member, getWelcome(interaction.guild.id));
+      await interaction.editReply({ ...payload });
       return true;
     }
     if (id === 'welcome_test') {
@@ -642,8 +722,9 @@ async function handleWelcomeInteraction(interaction) {
         await interaction.reply({ content: 'Welcome channel not found.', ephemeral: true });
         return true;
       }
-      await channel.send(buildWelcomePayload(interaction.member, current));
-      await interaction.reply({ content: `Test welcome sent in ${channel}.`, ephemeral: true });
+      await interaction.deferReply({ ephemeral: true });
+      await channel.send(await buildWelcomePayload(interaction.member, current));
+      await interaction.editReply({ content: `Test welcome sent in ${channel}.` });
       return true;
     }
   }
@@ -669,6 +750,7 @@ async function handleWelcomeInteraction(interaction) {
     if (choice === 'timestamp') patch.showTimestamp = !welcome.showTimestamp;
     if (choice === 'dm') patch.dmEnabled = !welcome.dmEnabled;
     if (choice === 'leave') patch.leaveEnabled = !welcome.leaveEnabled;
+    if (choice === 'card') patch.cardEnabled = !welcome.cardEnabled;
     saveWelcome(interaction.guild.id, patch);
     await refreshStudio(interaction);
     return true;
@@ -734,6 +816,28 @@ async function handleWelcomeInteraction(interaction) {
         leaveColor: interaction.fields.getTextInputValue('leaveColor') || '#ef5b5b',
       });
       await interaction.reply({ content: 'Leave message settings updated.', ephemeral: true });
+      return true;
+    }
+    if (id === 'welcome_modal_card') {
+      const posRaw = interaction.fields.getTextInputValue('cardPos').trim();
+      const parts = posRaw.split(/[\s,]+/).map(Number).filter((n) => !Number.isNaN(n));
+      const patch = {
+        cardEnabled: yes(interaction.fields.getTextInputValue('cardEnabled')),
+        cardSize: Number(interaction.fields.getTextInputValue('cardSize')) || DEFAULT_CARD.size,
+        cardBorderColor: interaction.fields.getTextInputValue('cardBorderColor') || DEFAULT_CARD.borderColor,
+        cardShowName: yes(interaction.fields.getTextInputValue('cardShowName') || 'yes'),
+      };
+      if (parts.length >= 2) {
+        patch.cardX = parts[0];
+        patch.cardY = parts[1];
+      }
+      saveWelcome(interaction.guild.id, patch);
+      await interaction.deferReply({ ephemeral: true });
+      const payload = await buildWelcomePayload(interaction.member, getWelcome(interaction.guild.id));
+      await interaction.editReply({
+        content: 'Welcome card updated — preview:',
+        ...payload,
+      });
       return true;
     }
   }

@@ -190,6 +190,23 @@ const commands = [
       )
       .addSubcommand((sub) =>
         sub
+          .setName('card')
+          .setDescription('Configure the Ravex welcome card (avatar on banner)')
+          .addBooleanOption((opt) => opt.setName('enabled').setDescription('Enable welcome card?'))
+          .addNumberOption((opt) =>
+            opt.setName('x').setDescription('Avatar X position % (0-100)').setMinValue(5).setMaxValue(95)
+          )
+          .addNumberOption((opt) =>
+            opt.setName('y').setDescription('Avatar Y position % (0-100)').setMinValue(5).setMaxValue(95)
+          )
+          .addNumberOption((opt) =>
+            opt.setName('size').setDescription('Circle size % of height').setMinValue(15).setMaxValue(70)
+          )
+          .addStringOption((opt) => opt.setName('border').setDescription('Ring color #hex'))
+          .addBooleanOption((opt) => opt.setName('showname').setDescription('Show username under circle?'))
+      )
+      .addSubcommand((sub) =>
+        sub
           .setName('rules')
           .setDescription('Set channel used by {rules} variable')
           .addChannelOption((opt) =>
@@ -384,6 +401,27 @@ const commands = [
         return interaction.reply({ content: `{rules} will mention ${channel}.`, ephemeral: true });
       }
 
+      if (sub === 'card') {
+        const patch = {};
+        const enabled = interaction.options.getBoolean('enabled');
+        const x = interaction.options.getNumber('x');
+        const y = interaction.options.getNumber('y');
+        const size = interaction.options.getNumber('size');
+        const border = interaction.options.getString('border');
+        const showname = interaction.options.getBoolean('showname');
+        if (enabled !== null) patch.cardEnabled = enabled;
+        if (x !== null) patch.cardX = x;
+        if (y !== null) patch.cardY = y;
+        if (size !== null) patch.cardSize = size;
+        if (border) patch.cardBorderColor = border;
+        if (showname !== null) patch.cardShowName = showname;
+        if (!Object.keys(patch).length) patch.cardEnabled = true;
+        saveWelcome(guildId, patch);
+        await interaction.deferReply({ ephemeral: true });
+        const payload = await buildWelcomePayload(interaction.member, getWelcome(guildId));
+        return interaction.editReply({ content: 'Welcome card settings updated — preview:', ...payload });
+      }
+
       if (sub === 'variables') {
         return interaction.reply({ embeds: [variablesEmbed()], ephemeral: true });
       }
@@ -396,8 +434,9 @@ const commands = [
       }
 
       if (sub === 'preview') {
-        const payload = buildWelcomePayload(interaction.member, getWelcome(guildId));
-        return interaction.reply({ ...payload, ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+        const payload = await buildWelcomePayload(interaction.member, getWelcome(guildId));
+        return interaction.editReply({ ...payload });
       }
 
       if (sub === 'test') {
@@ -409,8 +448,9 @@ const commands = [
         if (!channel?.isTextBased()) {
           return interaction.reply({ content: 'Welcome channel not found.', ephemeral: true });
         }
-        await channel.send(buildWelcomePayload(interaction.member, welcome));
-        return interaction.reply({ content: `Test welcome sent in ${channel}.`, ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+        await channel.send(await buildWelcomePayload(interaction.member, welcome));
+        return interaction.editReply({ content: `Test welcome sent in ${channel}.` });
       }
 
       if (sub === 'enable') {
@@ -560,6 +600,7 @@ const commands = [
               [
                 '**Welcome**',
                 '`/welcome studio` — full interactive customizer',
+                '`/welcome card` — Ravex banner + circular avatar',
                 '`/welcome preview` / `test` / `status` / `variables`',
                 '`/welcome message` `title` `color` `image` `thumbnail`',
                 '`/welcome dm` `leave` `autorole` `pool` `field` `rules`',
