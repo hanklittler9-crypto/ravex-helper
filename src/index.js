@@ -16,6 +16,7 @@ const { commands } = require('./commands');
 const { deployCommands } = require('./deploy-commands');
 const { openTicket, closeTicket, claimTicket, brandEmbed, BRAND } = require('./tickets');
 const { sendWelcome, sendLeave, handleWelcomeInteraction } = require('./welcome');
+const { handlePrefixCommands, handleAfkPassive, PREFIX } = require('./prefix');
 
 ensureDataFiles();
 
@@ -54,7 +55,7 @@ for (const command of commands) {
 
 client.once(Events.ClientReady, async (c) => {
   console.log(`${BRAND.name} online as ${c.user.tag}`);
-  c.user.setActivity('tickets & welcomes', { type: ActivityType.Watching });
+  c.user.setActivity(`${PREFIX}help · tickets & welcomes`, { type: ActivityType.Watching });
   setPersistenceClient(c);
 
   try {
@@ -219,6 +220,10 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
 
+    // Guild: prefix commands + AFK
+    if (await handlePrefixCommands(message)) return;
+    await handleAfkPassive(message);
+
     // Staff → user relay for modmail tickets
     const ticket = getTicketByChannel(message.channel.id);
     if (!ticket || ticket.status !== 'open' || ticket.source !== 'modmail') return;
@@ -232,6 +237,7 @@ client.on(Events.MessageCreate, async (message) => {
 
     // Skip bot command-ish messages starting with /
     if (message.content.startsWith('/')) return;
+    if (message.content.startsWith(PREFIX)) return;
 
     const user = await client.users.fetch(ticket.userId).catch(() => null);
     if (!user) return;

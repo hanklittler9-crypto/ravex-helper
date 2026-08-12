@@ -10,10 +10,11 @@ const {
   ActivityType,
 } = require('discord.js');
 const { ensure, getConfig } = require('./storage');
+const { restoreFromDiscord, setPersistenceClient } = require('./persist');
 const { commands } = require('./commands');
 const { deployCommandsSafe } = require('./deploy-commands');
 const { registerEvents } = require('./events');
-const { BRAND } = require('./logger');
+const { BRAND, ensureLogChannel, sendLog, brandEmbed } = require('./logger');
 
 ensure();
 
@@ -54,13 +55,31 @@ registerEvents(client);
 client.once(Events.ClientReady, async (c) => {
   console.log(`${BRAND.name} online as ${c.user.tag}`);
   c.user.setActivity('protecting the server', { type: ActivityType.Watching });
+  setPersistenceClient(c);
+
+  try {
+    await restoreFromDiscord(c);
+  } catch (err) {
+    console.error('Config restore failed:', err);
+  }
 
   for (const guild of c.guilds.cache.values()) {
-    const cfg = getConfig(guild.id);
-    if (!cfg.logChannelId) {
-      console.warn(`[logs] ${guild.name}: no log channel set. Run /security setup logs:#channel`);
-    } else {
-      console.log(`[logs] ${guild.name}: logging to ${cfg.logChannelId}`);
+    try {
+      const channel = await ensureLogChannel(guild);
+      const cfg = getConfig(guild.id);
+      if (channel) {
+        console.log(`[logs] ${guild.name}: logging to #${channel.name} (${cfg.logChannelId})`);
+        await sendLog(
+          guild,
+          brandEmbed(BRAND.ok)
+            .setTitle('Ravex Security online')
+            .setDescription('Message delete/edit logging is active in this channel.')
+        );
+      } else {
+        console.warn(`[logs] ${guild.name}: no log channel. Set LOG_CHANNEL_ID or run /security setup`);
+      }
+    } catch (err) {
+      console.error(`[logs] setup failed for ${guild.name}:`, err.message);
     }
   }
 

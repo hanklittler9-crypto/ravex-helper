@@ -1,34 +1,30 @@
-const fs = require('fs');
-const path = require('path');
 const { DEFAULT_CONFIG, normalizeConfig } = require('./defaults');
-
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const CONFIG_PATH = path.join(DATA_DIR, 'guild-config.json');
-const WARNINGS_PATH = path.join(DATA_DIR, 'warnings.json');
+const { CONFIG_PATH, WARNINGS_PATH, readLocal, writeLocal, ensureLocal } = require('./persist');
 
 function ensure() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(CONFIG_PATH)) fs.writeFileSync(CONFIG_PATH, '{}');
-  if (!fs.existsSync(WARNINGS_PATH)) fs.writeFileSync(WARNINGS_PATH, '{}');
-}
-
-function read(file) {
-  ensure();
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
-}
-
-function write(file, data) {
-  ensure();
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  ensureLocal();
 }
 
 function getConfig(guildId) {
-  const all = read(CONFIG_PATH);
-  return normalizeConfig(all[guildId] || {});
+  const all = readLocal(CONFIG_PATH);
+  const raw = all[guildId] || {};
+  const normalized = normalizeConfig(raw);
+
+  // Env fallbacks so Render can set logs without slash commands surviving restarts
+  if (!normalized.logChannelId && process.env.LOG_CHANNEL_ID) {
+    normalized.logChannelId = process.env.LOG_CHANNEL_ID;
+  }
+  if (!normalized.modLogChannelId && process.env.MOD_LOG_CHANNEL_ID) {
+    normalized.modLogChannelId = process.env.MOD_LOG_CHANNEL_ID;
+  } else if (!normalized.modLogChannelId && normalized.logChannelId) {
+    normalized.modLogChannelId = normalized.logChannelId;
+  }
+
+  return normalized;
 }
 
 function setConfig(guildId, patch) {
-  const all = read(CONFIG_PATH);
+  const all = readLocal(CONFIG_PATH);
   const current = getConfig(guildId);
   const next = normalizeConfig({
     ...current,
@@ -36,29 +32,29 @@ function setConfig(guildId, patch) {
     automod: { ...current.automod, ...(patch.automod || {}) },
   });
   all[guildId] = next;
-  write(CONFIG_PATH, all);
+  writeLocal(CONFIG_PATH, all);
   return next;
 }
 
 function getWarnings(guildId, userId) {
-  const all = read(WARNINGS_PATH);
+  const all = readLocal(WARNINGS_PATH);
   return all[guildId]?.[userId] || [];
 }
 
 function addWarning(guildId, userId, warning) {
-  const all = read(WARNINGS_PATH);
+  const all = readLocal(WARNINGS_PATH);
   if (!all[guildId]) all[guildId] = {};
   if (!all[guildId][userId]) all[guildId][userId] = [];
   all[guildId][userId].push(warning);
-  write(WARNINGS_PATH, all);
+  writeLocal(WARNINGS_PATH, all);
   return all[guildId][userId];
 }
 
 function clearWarnings(guildId, userId) {
-  const all = read(WARNINGS_PATH);
+  const all = readLocal(WARNINGS_PATH);
   if (!all[guildId]) return [];
   all[guildId][userId] = [];
-  write(WARNINGS_PATH, all);
+  writeLocal(WARNINGS_PATH, all);
   return [];
 }
 
@@ -69,4 +65,5 @@ module.exports = {
   getWarnings,
   addWarning,
   clearWarnings,
+  DEFAULT_CONFIG,
 };

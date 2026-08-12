@@ -32,5 +32,9 @@ services:
         sync: false
       - key: GUILD_ID
         sync: false
+      - key: LOG_CHANNEL_ID
+        sync: false
+      - key: MOD_LOG_CHANNEL_ID
+        sync: false
       - key: NODE_VERSION
         value: "20"

@@ -79,7 +79,7 @@ function registerEvents(client) {
         channelId: message.channelId || cached.channelId,
         authorId: author?.id || cached.authorId || null,
         authorTag: author?.tag || cached.authorTag || 'Unknown',
-        authorBot: Boolean(author?.bot ?? cached.authorBot),
+        authorBot: author ? Boolean(author.bot) : Boolean(cached.authorBot),
         content: message.content || cached.content || '',
         attachments:
           message.attachments?.size
@@ -94,6 +94,11 @@ function registerEvents(client) {
             ? [...message.stickers.values()].map((s) => s.name)
             : cached.stickers || [],
       };
+
+      // If we have zero info, still log a minimal delete event
+      if (!info.authorId && !info.content && !info.attachments.length) {
+        info.content = '*content unavailable (message was not cached — bot may have just restarted)*';
+      }
 
       await logDeletedMessage(guild, info);
     } catch (err) {

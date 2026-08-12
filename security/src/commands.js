@@ -4,7 +4,7 @@ const {
   ChannelType,
 } = require('discord.js');
 const { getConfig, setConfig, getWarnings, addWarning, clearWarnings } = require('./storage');
-const { brandEmbed, sendLog, BRAND } = require('./logger');
+const { brandEmbed, sendLog, BRAND, ensureLogChannel } = require('./logger');
 
 function msFromDuration(input) {
   if (!input) return 5 * 60 * 1000;
@@ -41,6 +41,9 @@ const commands = [
           )
       )
       .addSubcommand((sub) => sub.setName('status').setDescription('Show security config'))
+      .addSubcommand((sub) =>
+        sub.setName('testlog').setDescription('Send a test message to the log channel')
+      )
       .addSubcommand((sub) =>
         sub
           .setName('automod')
@@ -111,15 +114,54 @@ const commands = [
         if (modlogs) patch.modLogChannelId = modlogs.id;
         else patch.modLogChannelId = logs.id;
         setConfig(guildId, patch);
+
+        const ok = await sendLog(
+          interaction.guild,
+          brandEmbed(BRAND.ok)
+            .setTitle('Logging is live')
+            .setDescription(
+              `Delete a message anywhere in the server to test.\nLogs channel: ${logs}\nTriggered by ${interaction.user}`
+            )
+        );
+
         return interaction.reply({
           embeds: [
             brandEmbed(BRAND.ok)
               .setTitle('Security setup complete')
               .setDescription(
-                `Logs: ${logs}\nMod logs: ${modlogs || logs}\n\nAutomod is on by default. Use \`/security automod\` to tune it.`
+                [
+                  `Logs: ${logs}`,
+                  `Mod logs: ${modlogs || logs}`,
+                  ok
+                    ? 'A test log was posted in that channel.'
+                    : '⚠️ Could not post a test log — check my **Send Messages** + **Embed Links** perms there.',
+                  '',
+                  'Automod is on by default. Use `/security automod` to tune it.',
+                ].join('\n')
               ),
           ],
           ephemeral: true,
+        });
+      }
+
+      if (sub === 'testlog') {
+        await interaction.deferReply({ ephemeral: true });
+        const channel = await ensureLogChannel(interaction.guild);
+        if (!channel) {
+          return interaction.editReply({
+            content: 'No log channel and I could not create one. Run `/security setup` or give me Manage Channels.',
+          });
+        }
+        const ok = await sendLog(
+          interaction.guild,
+          brandEmbed(BRAND.info)
+            .setTitle('Test log')
+            .setDescription(`If you see this, logging works.\nRequested by ${interaction.user}`)
+        );
+        return interaction.editReply({
+          content: ok
+            ? `Test log sent in ${channel}.`
+            : `Failed to send in ${channel}. I need **View Channel**, **Send Messages**, and **Embed Links** there.`,
         });
       }
 
