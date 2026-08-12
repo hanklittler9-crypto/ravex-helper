@@ -196,6 +196,73 @@ async function buildWelcomePayload(member, welcome, { leave = false } = {}) {
   return payload;
 }
 
+/** Flatten payload for interaction replies/edits (reliable with files + embeds). */
+function asMessageOptions(payload, extra = {}) {
+  const options = {};
+  if (extra.content && payload.content) {
+    options.content = `${extra.content}\n${payload.content}`.slice(0, 2000);
+  } else if (payload.content) {
+    options.content = payload.content;
+  } else if (extra.content) {
+    options.content = extra.content;
+  }
+
+  if (payload.embeds?.length) {
+    options.embeds = payload.embeds.map((e) => (typeof e.toJSON === 'function' ? e.toJSON() : e));
+  }
+  if (payload.files?.length) options.files = payload.files;
+  if (payload.allowedMentions) options.allowedMentions = payload.allowedMentions;
+
+  if (options.content == null && !options.embeds?.length && !options.files?.length) {
+    options.content = extra.fallbackContent || 'Welcome preview';
+  }
+  return options;
+}
+
+async function runWelcomeTest(interaction, channelOverride = null) {
+  const welcome = getWelcome(interaction.guild.id);
+  let channel = channelOverride;
+
+  if (!channel && welcome.channelId) {
+    channel = await interaction.guild.channels.fetch(welcome.channelId).catch(() => null);
+  }
+  if (!channel) channel = interaction.channel;
+
+  if (!channel?.isTextBased?.()) {
+    return { ok: false, error: 'No text channel available to send the test welcome.' };
+  }
+
+  const me = interaction.guild.members.me;
+  if (me) {
+    const perms = channel.permissionsFor(me);
+    if (!perms?.has(PermissionFlagsBits.SendMessages)) {
+      return { ok: false, error: `I can't send messages in ${channel}. Fix my permissions.` };
+    }
+    if (welcome.cardEnabled && !perms.has(PermissionFlagsBits.AttachFiles)) {
+      return { ok: false, error: `I need the **Attach Files** permission in ${channel} for welcome cards.` };
+    }
+    if (!perms.has(PermissionFlagsBits.EmbedLinks)) {
+      return { ok: false, error: `I need the **Embed Links** permission in ${channel}.` };
+    }
+  }
+
+  try {
+    const payload = await buildWelcomePayload(interaction.member, welcome);
+    await channel.send(asMessageOptions(payload));
+    const usedFallback = !welcome.channelId || welcome.channelId !== channel.id;
+    return {
+      ok: true,
+      channel,
+      note: usedFallback
+        ? `No welcome channel saved — sent in ${channel}. Pick one in the studio channel menu.`
+        : `Test welcome sent in ${channel}.`,
+    };
+  } catch (err) {
+    console.error('Welcome test send failed:', err);
+    return { ok: false, error: `Failed to send welcome: ${err.message}` };
+  }
+}
+
 async function assignAutoRoles(member) {
   const welcome = getWelcome(member.guild.id);
   if (!welcome.autoRoleIds?.length) return;
@@ -217,7 +284,7 @@ async function sendWelcome(member) {
   if (welcome.channelId) {
     const channel = await member.guild.channels.fetch(welcome.channelId).catch(() => null);
     if (channel?.isTextBased()) {
-      await channel.send(await buildWelcomePayload(member, welcome));
+      await channel.send(asMessageOptions(await buildWelcomePayload(member, welcome)));
     }
   }
 
@@ -231,7 +298,7 @@ async function sendWelcome(member) {
       messages: [],
       cardEnabled: false,
     };
-    await member.user.send(await buildWelcomePayload(member, dmWelcome)).catch(() => null);
+    await member.user.send(asMessageOptions(await buildWelcomePayload(member, dmWelcome))).catch(() => null);
   }
 }
 
@@ -240,7 +307,7 @@ async function sendLeave(member) {
   if (!welcome.leaveEnabled || !welcome.leaveChannelId) return;
   const channel = await member.guild.channels.fetch(welcome.leaveChannelId).catch(() => null);
   if (!channel?.isTextBased()) return;
-  await channel.send(await buildWelcomePayload(member, welcome, { leave: true }));
+  await channel.send(asMessageOptions(await buildWelcomePayload(member, welcome, { leave: true })));
 }
 
 function statusEmbed(guild, welcome) {
@@ -707,24 +774,19 @@ async function handleWelcomeInteraction(interaction) {
     }
     if (id === 'welcome_preview') {
       await interaction.deferReply({ ephemeral: true });
-      const payload = await buildWelcomePayload(interaction.member, getWelcome(interaction.guild.id));
-      await interaction.editReply({ ...payload });
+      try {
+        const payload = await buildWelcomePayload(interaction.member, getWelcome(interaction.guild.id));
+        await interaction.editReply(asMessageOptions(payload, { fallbackContent: 'Welcome preview' }));
+      } catch (err) {
+        console.error('Welcome preview failed:', err);
+        await interaction.editReply({ content: `Preview failed: ${err.message}` });
+      }
       return true;
     }
     if (id === 'welcome_test') {
-      const current = getWelcome(interaction.guild.id);
-      if (!current.channelId) {
-        await interaction.reply({ content: 'Set a welcome channel first.', ephemeral: true });
-        return true;
-      }
-      const channel = await interaction.guild.channels.fetch(current.channelId).catch(() => null);
-      if (!channel?.isTextBased()) {
-        await interaction.reply({ content: 'Welcome channel not found.', ephemeral: true });
-        return true;
-      }
       await interaction.deferReply({ ephemeral: true });
-      await channel.send(await buildWelcomePayload(interaction.member, current));
-      await interaction.editReply({ content: `Test welcome sent in ${channel}.` });
+      const result = await runWelcomeTest(interaction);
+      await interaction.editReply({ content: result.ok ? result.note : result.error });
       return true;
     }
   }
@@ -833,11 +895,14 @@ async function handleWelcomeInteraction(interaction) {
       }
       saveWelcome(interaction.guild.id, patch);
       await interaction.deferReply({ ephemeral: true });
-      const payload = await buildWelcomePayload(interaction.member, getWelcome(interaction.guild.id));
-      await interaction.editReply({
-        content: 'Welcome card updated — preview:',
-        ...payload,
-      });
+      try {
+        const payload = await buildWelcomePayload(interaction.member, getWelcome(interaction.guild.id));
+        await interaction.editReply(
+          asMessageOptions(payload, { content: 'Welcome card updated — preview:', fallbackContent: 'Welcome card updated.' })
+        );
+      } catch (err) {
+        await interaction.editReply({ content: `Card saved, but preview failed: ${err.message}` });
+      }
       return true;
     }
   }
@@ -852,6 +917,8 @@ module.exports = {
   saveWelcome,
   formatTemplate,
   buildWelcomePayload,
+  asMessageOptions,
+  runWelcomeTest,
   sendWelcome,
   sendLeave,
   statusEmbed,

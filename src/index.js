@@ -11,6 +11,7 @@ const {
   ActivityType,
 } = require('discord.js');
 const { ensureDataFiles, getGuildConfig, getTicketByChannel, getOpenTicketForUser } = require('./storage');
+const { restoreFromDiscord, setPersistenceClient } = require('./persist');
 const { commands } = require('./commands');
 const { deployCommands } = require('./deploy-commands');
 const { openTicket, closeTicket, claimTicket, brandEmbed, BRAND } = require('./tickets');
@@ -54,6 +55,13 @@ for (const command of commands) {
 client.once(Events.ClientReady, async (c) => {
   console.log(`${BRAND.name} online as ${c.user.tag}`);
   c.user.setActivity('tickets & welcomes', { type: ActivityType.Watching });
+  setPersistenceClient(c);
+
+  try {
+    await restoreFromDiscord(c);
+  } catch (err) {
+    console.error('Config restore failed:', err);
+  }
 
   try {
     const clientId = process.env.CLIENT_ID || c.user.id;

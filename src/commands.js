@@ -16,6 +16,8 @@ const {
   getWelcome,
   saveWelcome,
   buildWelcomePayload,
+  asMessageOptions,
+  runWelcomeTest,
   statusEmbed,
   studioComponents,
   variablesEmbed,
@@ -220,7 +222,17 @@ const commands = [
       .addSubcommand((sub) => sub.setName('variables').setDescription('Show all template variables'))
       .addSubcommand((sub) => sub.setName('status').setDescription('Show current welcome config'))
       .addSubcommand((sub) => sub.setName('preview').setDescription('Preview welcome as an ephemeral message'))
-      .addSubcommand((sub) => sub.setName('test').setDescription('Send a test welcome to the welcome channel'))
+      .addSubcommand((sub) =>
+        sub
+          .setName('test')
+          .setDescription('Send a test welcome (uses welcome channel, or here)')
+          .addChannelOption((opt) =>
+            opt
+              .setName('channel')
+              .setDescription('Optional channel override')
+              .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+          )
+      )
       .addSubcommand((sub) =>
         sub
           .setName('enable')
@@ -418,8 +430,17 @@ const commands = [
         if (!Object.keys(patch).length) patch.cardEnabled = true;
         saveWelcome(guildId, patch);
         await interaction.deferReply({ ephemeral: true });
-        const payload = await buildWelcomePayload(interaction.member, getWelcome(guildId));
-        return interaction.editReply({ content: 'Welcome card settings updated — preview:', ...payload });
+        try {
+          const payload = await buildWelcomePayload(interaction.member, getWelcome(guildId));
+          return interaction.editReply(
+            asMessageOptions(payload, {
+              content: 'Welcome card settings updated — preview:',
+              fallbackContent: 'Welcome card updated.',
+            })
+          );
+        } catch (err) {
+          return interaction.editReply({ content: `Card saved, but preview failed: ${err.message}` });
+        }
       }
 
       if (sub === 'variables') {
@@ -435,22 +456,19 @@ const commands = [
 
       if (sub === 'preview') {
         await interaction.deferReply({ ephemeral: true });
-        const payload = await buildWelcomePayload(interaction.member, getWelcome(guildId));
-        return interaction.editReply({ ...payload });
+        try {
+          const payload = await buildWelcomePayload(interaction.member, getWelcome(guildId));
+          return interaction.editReply(asMessageOptions(payload, { fallbackContent: 'Welcome preview' }));
+        } catch (err) {
+          return interaction.editReply({ content: `Preview failed: ${err.message}` });
+        }
       }
 
       if (sub === 'test') {
-        const welcome = getWelcome(guildId);
-        if (!welcome.channelId) {
-          return interaction.reply({ content: 'Set a welcome channel first.', ephemeral: true });
-        }
-        const channel = await interaction.guild.channels.fetch(welcome.channelId).catch(() => null);
-        if (!channel?.isTextBased()) {
-          return interaction.reply({ content: 'Welcome channel not found.', ephemeral: true });
-        }
         await interaction.deferReply({ ephemeral: true });
-        await channel.send(await buildWelcomePayload(interaction.member, welcome));
-        return interaction.editReply({ content: `Test welcome sent in ${channel}.` });
+        const override = interaction.options.getChannel('channel');
+        const result = await runWelcomeTest(interaction, override);
+        return interaction.editReply({ content: result.ok ? result.note : result.error });
       }
 
       if (sub === 'enable') {

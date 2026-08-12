@@ -1,25 +1,9 @@
-const fs = require('fs');
-const path = require('path');
 const { DEFAULT_WELCOME, normalizeWelcome } = require('./welcomeDefaults');
-
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const GUILD_CONFIG_PATH = path.join(DATA_DIR, 'guild-config.json');
-const TICKETS_PATH = path.join(DATA_DIR, 'tickets.json');
+const { GUILD_CONFIG_PATH, TICKETS_PATH, readLocal, writeLocal } = require('./persist');
 
 function ensureDataFiles() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(GUILD_CONFIG_PATH)) fs.writeFileSync(GUILD_CONFIG_PATH, '{}');
-  if (!fs.existsSync(TICKETS_PATH)) fs.writeFileSync(TICKETS_PATH, '{}');
-}
-
-function readJson(filePath) {
-  ensureDataFiles();
-  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-}
-
-function writeJson(filePath, data) {
-  ensureDataFiles();
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  readLocal(GUILD_CONFIG_PATH);
+  readLocal(TICKETS_PATH);
 }
 
 function defaultGuildConfig() {
@@ -35,7 +19,7 @@ function defaultGuildConfig() {
 }
 
 function getGuildConfig(guildId) {
-  const all = readJson(GUILD_CONFIG_PATH);
+  const all = readLocal(GUILD_CONFIG_PATH);
   const raw = all[guildId] || {};
   const base = { ...defaultGuildConfig(), ...raw };
   base.welcome = normalizeWelcome(raw.welcome || raw);
@@ -43,21 +27,21 @@ function getGuildConfig(guildId) {
 }
 
 function setGuildConfig(guildId, patch) {
-  const all = readJson(GUILD_CONFIG_PATH);
+  const all = readLocal(GUILD_CONFIG_PATH);
   const current = getGuildConfig(guildId);
   const next = { ...current, ...patch };
   if (patch.welcome) next.welcome = normalizeWelcome({ ...current.welcome, ...patch.welcome });
   all[guildId] = next;
-  writeJson(GUILD_CONFIG_PATH, all);
+  writeLocal(GUILD_CONFIG_PATH, all);
   return all[guildId];
 }
 
 function getTickets() {
-  return readJson(TICKETS_PATH);
+  return readLocal(TICKETS_PATH);
 }
 
 function saveTickets(tickets) {
-  writeJson(TICKETS_PATH, tickets);
+  writeLocal(TICKETS_PATH, tickets);
 }
 
 function getTicketByChannel(channelId) {
