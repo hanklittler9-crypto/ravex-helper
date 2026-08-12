@@ -40,3 +40,11 @@ npm start
 | `/help` | Command list |
 
 **Modmail:** users DM the bot → a ticket opens. Staff replies in that ticket are forwarded back to the user’s DMs.
+
+## Deploy on Render (Web Service)
+
+1. New → **Web Service** → connect `ravex-helper`
+2. Build: `npm install` · Start: `npm start`
+3. Add env vars: `DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`
+4. Deploy — the bot opens an HTTP health endpoint on `PORT` so Render stays healthy
+5. Locally once: `npm run deploy` (registers slash commands)

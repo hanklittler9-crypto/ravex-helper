@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const http = require('http');
 const {
   Client,
   GatewayIntentBits,
@@ -20,6 +21,17 @@ if (!token) {
   console.error('Missing DISCORD_TOKEN in .env — copy .env.example to .env and fill it in.');
   process.exit(1);
 }
+
+// Render Web Service requires a process listening on PORT
+const port = Number(process.env.PORT) || 3000;
+http
+  .createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end(`${BRAND.name} is online`);
+  })
+  .listen(port, () => {
+    console.log(`Health server listening on ${port}`);
+  });
 
 const client = new Client({
   intents: [
