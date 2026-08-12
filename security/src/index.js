@@ -11,7 +11,7 @@ const {
 } = require('discord.js');
 const { ensure } = require('./storage');
 const { commands } = require('./commands');
-const { deployCommands } = require('./deploy-commands');
+const { deployCommandsSafe } = require('./deploy-commands');
 const { registerEvents } = require('./events');
 const { BRAND } = require('./logger');
 
@@ -56,16 +56,7 @@ client.once(Events.ClientReady, async (c) => {
   c.user.setActivity('protecting the server', { type: ActivityType.Watching });
 
   try {
-    const clientId = process.env.CLIENT_ID || c.user.id;
-    if (process.env.GUILD_ID) {
-      await deployCommands({ token, clientId, guildId: process.env.GUILD_ID });
-    } else if (c.guilds.cache.size > 0) {
-      for (const guild of c.guilds.cache.values()) {
-        await deployCommands({ token, clientId, guildId: guild.id });
-      }
-    } else {
-      await deployCommands({ token, clientId, guildId: null });
-    }
+    await deployCommandsSafe(c, token);
   } catch (err) {
     console.error('Failed to register slash commands:', err);
   }
