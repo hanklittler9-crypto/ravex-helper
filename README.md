@@ -1,3 +1,16 @@
+# Ravex bots
+
+This repo has **two separate Discord bots**:
+
+| Bot | Folder | Purpose |
+|---|---|---|
+| **Ravex Helper** | repo root (`.`) | Welcomes, tickets, modmail |
+| **Ravex Security** | [`security/`](./security) | Logging, automod, moderation |
+
+Each bot needs its **own** Discord application + token.
+
+---
+
 # Ravex Helper
 
 Discord welcomer + modmail/ticket bot.
