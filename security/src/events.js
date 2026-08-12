@@ -1,49 +1,175 @@
-const { brandEmbed, sendLog, truncate, BRAND } = require('./logger');
+const { brandEmbed, sendLog, truncate, findDeleter, BRAND } = require('./logger');
 const { handleAutomod } = require('./automod');
+const { cacheMessage, takeCached, peekCached, updateCached } = require('./messageCache');
+const { getConfig } = require('./storage');
+
+function isLogChannel(guild, channelId) {
+  const config = getConfig(guild.id);
+  return channelId && (channelId === config.logChannelId || channelId === config.modLogChannelId);
+}
+
+function formatAttachments(list = []) {
+  if (!list.length) return null;
+  return list.map((a) => `[${a.name || 'file'}](${a.url})`).join('\n').slice(0, 1000);
+}
+
+async function logDeletedMessage(guild, info) {
+  if (!guild || info.authorBot) return;
+  if (isLogChannel(guild, info.channelId)) return;
+
+  const deleter = await findDeleter(guild, info.channelId, info.authorId);
+  const embed = brandEmbed(BRAND.danger)
+    .setTitle('Message deleted')
+    .addFields(
+      {
+        name: 'Author',
+        value: info.authorId ? `<@${info.authorId}> (\`${info.authorId}\`)` : info.authorTag || 'Unknown',
+        inline: true,
+      },
+      {
+        name: 'Channel',
+        value: info.channelId ? `<#${info.channelId}>` : 'Unknown',
+        inline: true,
+      },
+      {
+        name: 'Deleted by',
+        value: deleter ? `${deleter} (\`${deleter.id}\`)` : 'Unknown / self-delete',
+        inline: true,
+      },
+      { name: 'Content', value: truncate(info.content, 1024) }
+    );
+
+  if (info.attachments?.length) {
+    embed.addFields({ name: 'Attachments', value: formatAttachments(info.attachments) });
+  }
+  if (info.stickers?.length) {
+    embed.addFields({ name: 'Stickers', value: info.stickers.join(', ') });
+  }
+  if (info.id) {
+    embed.setFooter({ text: `Ravex Security · message ${info.id}` });
+  }
+
+  const files = (info.attachments || [])
+    .filter((a) => a.url && (!a.contentType || a.contentType.startsWith('image/')))
+    .slice(0, 3)
+    .map((a) => a.url);
+
+  await sendLog(guild, embed, { files });
+}
 
 function registerEvents(client) {
   client.on('messageCreate', async (message) => {
     try {
+      cacheMessage(message);
       await handleAutomod(message);
     } catch (err) {
-      console.error('Automod error:', err);
+      console.error('messageCreate error:', err);
     }
   });
 
   client.on('messageDelete', async (message) => {
     try {
-      if (!message.guild || message.author?.bot) return;
-      await sendLog(
-        message.guild,
-        brandEmbed(BRAND.danger)
-          .setTitle('Message deleted')
-          .addFields(
-            { name: 'Author', value: message.author ? `${message.author} (\`${message.author.id}\`)` : 'Unknown', inline: true },
-            { name: 'Channel', value: `${message.channel}`, inline: true },
-            { name: 'Content', value: truncate(message.content) }
-          )
-      );
+      const guild = message.guild || (message.guildId ? await client.guilds.fetch(message.guildId).catch(() => null) : null);
+      if (!guild) return;
+
+      const cached = takeCached(message.id) || {};
+      const author = message.author;
+      const info = {
+        id: message.id,
+        channelId: message.channelId || cached.channelId,
+        authorId: author?.id || cached.authorId || null,
+        authorTag: author?.tag || cached.authorTag || 'Unknown',
+        authorBot: Boolean(author?.bot ?? cached.authorBot),
+        content: message.content || cached.content || '',
+        attachments:
+          message.attachments?.size
+            ? [...message.attachments.values()].map((a) => ({
+                name: a.name,
+                url: a.url,
+                contentType: a.contentType,
+              }))
+            : cached.attachments || [],
+        stickers:
+          message.stickers?.size
+            ? [...message.stickers.values()].map((s) => s.name)
+            : cached.stickers || [],
+      };
+
+      await logDeletedMessage(guild, info);
     } catch (err) {
       console.error('messageDelete log error:', err);
     }
   });
 
+  client.on('messageDeleteBulk', async (messages, channel) => {
+    try {
+      const guild = channel.guild;
+      if (!guild || isLogChannel(guild, channel.id)) return;
+
+      const samples = [];
+      for (const msg of messages.values()) {
+        const cached = takeCached(msg.id) || peekCached(msg.id) || {};
+        if (msg.author?.bot || cached.authorBot) continue;
+        samples.push({
+          author: msg.author?.tag || cached.authorTag || 'Unknown',
+          content: truncate(msg.content || cached.content || '', 120),
+        });
+        if (samples.length >= 8) break;
+      }
+
+      const embed = brandEmbed(BRAND.danger)
+        .setTitle('Bulk messages deleted')
+        .addFields(
+          { name: 'Channel', value: `${channel}`, inline: true },
+          { name: 'Count', value: String(messages.size), inline: true },
+          {
+            name: 'Sample',
+            value: samples.length
+              ? samples.map((s) => `**${s.author}:** ${s.content}`).join('\n')
+              : '*no cached content*',
+          }
+        );
+
+      await sendLog(guild, embed);
+    } catch (err) {
+      console.error('messageDeleteBulk log error:', err);
+    }
+  });
+
   client.on('messageUpdate', async (oldMessage, newMessage) => {
     try {
+      if (newMessage.partial) {
+        try {
+          newMessage = await newMessage.fetch();
+        } catch {
+          return;
+        }
+      }
       if (!newMessage.guild || newMessage.author?.bot) return;
-      if (oldMessage.content === newMessage.content) return;
-      await sendLog(
-        newMessage.guild,
-        brandEmbed(BRAND.warn)
-          .setTitle('Message edited')
-          .addFields(
-            { name: 'Author', value: `${newMessage.author} (\`${newMessage.author.id}\`)`, inline: true },
-            { name: 'Channel', value: `${newMessage.channel}`, inline: true },
-            { name: 'Before', value: truncate(oldMessage.content) },
-            { name: 'After', value: truncate(newMessage.content) },
-            { name: 'Jump', value: `[Go to message](${newMessage.url})` }
-          )
-      );
+      if (isLogChannel(newMessage.guild, newMessage.channelId)) return;
+
+      const cached = peekCached(newMessage.id);
+      const before = oldMessage.content ?? cached?.content ?? '';
+      const after = newMessage.content ?? '';
+      if (before === after) {
+        updateCached(newMessage);
+        return;
+      }
+
+      updateCached(newMessage);
+
+      const embed = brandEmbed(BRAND.warn)
+        .setTitle('Message edited')
+        .addFields(
+          { name: 'Author', value: `${newMessage.author} (\`${newMessage.author.id}\`)`, inline: true },
+          { name: 'Channel', value: `${newMessage.channel}`, inline: true },
+          { name: 'Before', value: truncate(before, 1024) },
+          { name: 'After', value: truncate(after, 1024) },
+          { name: 'Jump', value: `[Go to message](${newMessage.url})` }
+        )
+        .setFooter({ text: `Ravex Security · message ${newMessage.id}` });
+
+      await sendLog(newMessage.guild, embed);
     } catch (err) {
       console.error('messageUpdate log error:', err);
     }
@@ -158,16 +284,12 @@ function registerEvents(client) {
       if (!oldState.channelId && newState.channelId) {
         await sendLog(
           guild,
-          brandEmbed(BRAND.info)
-            .setTitle('Voice joined')
-            .setDescription(`${member} joined ${newState.channel}`)
+          brandEmbed(BRAND.info).setTitle('Voice joined').setDescription(`${member} joined ${newState.channel}`)
         );
       } else if (oldState.channelId && !newState.channelId) {
         await sendLog(
           guild,
-          brandEmbed(BRAND.info)
-            .setTitle('Voice left')
-            .setDescription(`${member} left ${oldState.channel}`)
+          brandEmbed(BRAND.info).setTitle('Voice left').setDescription(`${member} left ${oldState.channel}`)
         );
       } else if (oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
         await sendLog(

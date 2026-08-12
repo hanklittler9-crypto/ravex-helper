@@ -9,7 +9,7 @@ const {
   Collection,
   ActivityType,
 } = require('discord.js');
-const { ensure } = require('./storage');
+const { ensure, getConfig } = require('./storage');
 const { commands } = require('./commands');
 const { deployCommandsSafe } = require('./deploy-commands');
 const { registerEvents } = require('./events');
@@ -54,6 +54,15 @@ registerEvents(client);
 client.once(Events.ClientReady, async (c) => {
   console.log(`${BRAND.name} online as ${c.user.tag}`);
   c.user.setActivity('protecting the server', { type: ActivityType.Watching });
+
+  for (const guild of c.guilds.cache.values()) {
+    const cfg = getConfig(guild.id);
+    if (!cfg.logChannelId) {
+      console.warn(`[logs] ${guild.name}: no log channel set. Run /security setup logs:#channel`);
+    } else {
+      console.log(`[logs] ${guild.name}: logging to ${cfg.logChannelId}`);
+    }
+  }
 
   try {
     await deployCommandsSafe(c, token);
