@@ -7,7 +7,7 @@ const DEFAULT_WELCOME = {
   description: 'Welcome to **{server}**, {user}!\nYou are member **#{count}**.',
   messages: [], // random description pool; if set, overrides description
   title: 'Welcome to {server}!',
-  color: '#a855f7',
+  color: '#3b82f6',
   footer: '{server} · member #{count}',
   footerIcon: 'server', // server | user | none | url
   footerIconUrl: '',
@@ -29,12 +29,12 @@ const DEFAULT_WELCOME = {
   leaveColor: '#ef5b5b',
   autoRoleIds: [],
   rulesChannelId: null,
-  // Generated welcome card (avatar circle on Ravex banner)
+  // Generated welcome card (avatar circle on VLOCITY banner)
   cardEnabled: true,
-  cardX: 82,
-  cardY: 58,
-  cardSize: 42,
-  cardBorderColor: '#c084fc',
+  cardX: 50,
+  cardY: 48,
+  cardSize: 38,
+  cardBorderColor: '#60a5fa',
   cardBorderWidth: 6,
   cardShowName: true,
 };

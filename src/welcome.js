@@ -17,7 +17,7 @@ const { getGuildConfig, setGuildConfig } = require('./storage');
 const { DEFAULT_WELCOME, normalizeWelcome } = require('./welcomeDefaults');
 const { buildWelcomeCardAttachment, DEFAULT_CARD } = require('./welcomeCard');
 
-const BRAND = { name: 'Ravex Helper', color: 0x5b8def, footer: 'Ravex Helper' };
+const BRAND = { name: 'Ravex Helper', color: 0x3b82f6, footer: 'Ravex Helper' };
 
 function brandEmbed() {
   return new EmbedBuilder().setColor(BRAND.color).setFooter({ text: BRAND.footer });
@@ -481,7 +481,7 @@ function embedModal(welcome) {
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
         .setMaxLength(7)
-        .setValue((welcome.color || '#5b8def').slice(0, 7))
+        .setValue((welcome.color || '#3b82f6').slice(0, 7))
     ),
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
@@ -832,7 +832,7 @@ async function handleWelcomeInteraction(interaction) {
     }
     if (id === 'welcome_modal_embed') {
       saveWelcome(interaction.guild.id, {
-        color: interaction.fields.getTextInputValue('color') || '#5b8def',
+        color: interaction.fields.getTextInputValue('color') || '#3b82f6',
         thumbnail: normalizeMode(interaction.fields.getTextInputValue('thumbnail'), ['user', 'server', 'none', 'url'], 'user'),
         thumbnailUrl: interaction.fields.getTextInputValue('thumbnailUrl'),
         footerIcon: normalizeMode(interaction.fields.getTextInputValue('footerIcon'), ['user', 'server', 'none', 'url'], 'server'),

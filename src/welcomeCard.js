@@ -6,10 +6,10 @@ const BANNER_PATH = path.join(__dirname, '..', 'assets', 'welcome-banner.png');
 
 const DEFAULT_CARD = {
   enabled: true,
-  x: 82, // percent of width (center)
-  y: 58, // percent of height (center)
-  size: 42, // diameter as percent of banner height
-  borderColor: '#c084fc',
+  x: 50, // center — between VL logo and VLOCITY text
+  y: 48,
+  size: 38,
+  borderColor: '#60a5fa',
   borderWidth: 6,
   showName: true,
   nameColor: '#ffffff',
@@ -39,13 +39,13 @@ async function renderWelcomeCard(member, options = {}) {
 
   const avatar = await loadAvatar(member);
 
-  // soft purple glow
+  // soft blue glow
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, radius + 10, 0, Math.PI * 2);
   ctx.shadowColor = opts.borderColor || DEFAULT_CARD.borderColor;
   ctx.shadowBlur = 28;
-  ctx.fillStyle = 'rgba(168, 85, 247, 0.35)';
+  ctx.fillStyle = 'rgba(96, 165, 250, 0.35)';
   ctx.fill();
   ctx.restore();
 
