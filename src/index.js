@@ -26,22 +26,29 @@ if (!token) {
   process.exit(1);
 }
 
-// Render Web Service requires a process listening on PORT
+// Optional health server (needed on Render; on home servers ignore busy ports)
 const port = Number(process.env.PORT) || 3000;
-http
-  .createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end(`${BRAND.name} is online`);
-  })
-  .listen(port, () => {
-    console.log(`Health server listening on ${port}`);
-  });
+const healthServer = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end(`${BRAND.name} is online`);
+});
+healthServer.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.warn(`Health port ${port} in use — Discord bot will still start`);
+    return;
+  }
+  console.error('Health server error:', err);
+});
+healthServer.listen(port, () => {
+  console.log(`Health server listening on ${port}`);
+});
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
   ],

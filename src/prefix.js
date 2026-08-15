@@ -1,6 +1,8 @@
 const { PermissionFlagsBits } = require('discord.js');
 const { setAfk, getAfk, clearAfk, formatSince } = require('./afk');
 const { brandEmbed, BRAND } = require('./welcome');
+const music = require('./music');
+const { handleVoiceModCommand } = require('./voiceMod');
 
 const PREFIX = '*';
 
@@ -42,7 +44,9 @@ const commands = {
       embeds: [
         brandEmbed()
           .setTitle('AFK set')
-          .setDescription(`${message.author} is now AFK: **${reason.slice(0, 200)}**\nUse any message (or \`*afk\` again) when you're back.`),
+          .setDescription(
+            `${message.author} is now AFK: **${reason.slice(0, 200)}**\nUse any message (or \`*afk\` again) when you're back.`
+          ),
       ],
     });
   },
@@ -81,22 +85,28 @@ const commands = {
             [
               `Prefix: \`${PREFIX}\``,
               '',
-              `\`${PREFIX}afk [reason]\` — set yourself AFK`,
-              `\`${PREFIX}back\` — clear AFK`,
-              `\`${PREFIX}ping\` — bot latency`,
-              `\`${PREFIX}avatar [@user]\` — show avatar`,
-              `\`${PREFIX}userinfo [@user]\` — user info`,
-              `\`${PREFIX}serverinfo\` — server info`,
-              `\`${PREFIX}help\` — this list`,
+              '**General**',
+              `\`${PREFIX}afk [reason]\` · \`${PREFIX}back\` · \`${PREFIX}ping\``,
+              `\`${PREFIX}avatar\` · \`${PREFIX}userinfo\` · \`${PREFIX}serverinfo\``,
               '',
-              'Slash commands still work too (`/welcome`, `/ticket`, …).',
+              '**Music**',
+              `\`${PREFIX}play <song/url>\` · \`${PREFIX}skip\` · \`${PREFIX}stop\``,
+              `\`${PREFIX}pause\` · \`${PREFIX}resume\` · \`${PREFIX}queue\` · \`${PREFIX}np\``,
+              `\`${PREFIX}leave\` — leave voice`,
+              '',
+              '**Voice mod (slurs)**',
+              `\`${PREFIX}vm join\` — listen in your VC`,
+              `\`${PREFIX}vm leave\` · \`${PREFIX}vm status\` · \`${PREFIX}vm warnings\``,
+              '3 voice warns → 1 hour timeout (needs `OPENAI_API_KEY`)',
+              '',
+              'Slash commands still work (`/welcome`, `/ticket`, …).',
             ].join('\n')
           ),
       ],
     });
   },
 
-  async avatar(message, { args }) {
+  async avatar(message) {
     const user = message.mentions.users.first() || message.author;
     await message.reply({
       embeds: [
@@ -123,7 +133,12 @@ const commands = {
         { name: 'Joined', value: `<t:${Math.floor(member.joinedTimestamp / 1000)}:R>`, inline: true },
         {
           name: 'Roles',
-          value: member.roles.cache.filter((r) => r.id !== message.guild.id).map((r) => r.toString()).slice(0, 15).join(', ') || '*none*',
+          value:
+            member.roles.cache
+              .filter((r) => r.id !== message.guild.id)
+              .map((r) => r.toString())
+              .slice(0, 15)
+              .join(', ') || '*none*',
         }
       );
     }
@@ -152,9 +167,39 @@ const commands = {
       ],
     });
   },
+
+  async play(message, { argString }) {
+    return music.enqueue(message, argString);
+  },
+  async skip(message) {
+    return music.skip(message);
+  },
+  async stop(message) {
+    return music.stop(message);
+  },
+  async pause(message) {
+    return music.pause(message);
+  },
+  async resume(message) {
+    return music.resume(message);
+  },
+  async queue(message) {
+    return music.queue(message);
+  },
+  async np(message) {
+    return music.nowPlaying(message);
+  },
+  async leave(message) {
+    return music.leave(message);
+  },
+  async vm(message, parsed) {
+    return handleVoiceModCommand(message, parsed);
+  },
+  async voicemod(message, parsed) {
+    return handleVoiceModCommand(message, parsed);
+  },
 };
 
-// aliases
 commands.a = commands.afk;
 commands.p = commands.ping;
 commands.h = commands.help;
@@ -162,11 +207,12 @@ commands.av = commands.avatar;
 commands.whois = commands.userinfo;
 commands.ui = commands.userinfo;
 commands.si = commands.serverinfo;
+commands.s = commands.skip;
+commands.q = commands.queue;
 
 async function handleAfkPassive(message) {
   if (!message.guild || message.author.bot) return;
 
-  // Returning from AFK (any normal message except setting afk again)
   const parsed = parseCommand(message.content);
   const settingAfk = parsed && (parsed.name === 'afk' || parsed.name === 'a');
   if (!settingAfk) {
@@ -174,19 +220,20 @@ async function handleAfkPassive(message) {
     if (prev) {
       clearAfk(message.guild.id, message.author.id);
       await maybeSetAfkNick(message.member, false);
-      await message.reply({
-        embeds: [
-          brandEmbed()
-            .setColor(0x22c55e)
-            .setDescription(
-              `Welcome back ${message.author} — you were AFK for **${formatSince(prev.since)}** (${prev.reason}).`
-            ),
-        ],
-      }).catch(() => null);
+      await message
+        .reply({
+          embeds: [
+            brandEmbed()
+              .setColor(0x22c55e)
+              .setDescription(
+                `Welcome back ${message.author} — you were AFK for **${formatSince(prev.since)}** (${prev.reason}).`
+              ),
+          ],
+        })
+        .catch(() => null);
     }
   }
 
-  // Mention / reply notifications
   const targets = new Set(message.mentions.users.map((u) => u.id));
   if (message.reference?.messageId) {
     const ref = await message.channel.messages.fetch(message.reference.messageId).catch(() => null);
@@ -197,15 +244,17 @@ async function handleAfkPassive(message) {
     if (userId === message.author.id) continue;
     const afk = getAfk(message.guild.id, userId);
     if (!afk) continue;
-    await message.reply({
-      embeds: [
-        brandEmbed()
-          .setColor(0xf59e0b)
-          .setDescription(
-            `<@${userId}> is AFK: **${afk.reason}** · since <t:${Math.floor(afk.since / 1000)}:R> (${formatSince(afk.since)})`
-          ),
-      ],
-    }).catch(() => null);
+    await message
+      .reply({
+        embeds: [
+          brandEmbed()
+            .setColor(0xf59e0b)
+            .setDescription(
+              `<@${userId}> is AFK: **${afk.reason}** · since <t:${Math.floor(afk.since / 1000)}:R> (${formatSince(afk.since)})`
+            ),
+        ],
+      })
+      .catch(() => null);
   }
 }
 
