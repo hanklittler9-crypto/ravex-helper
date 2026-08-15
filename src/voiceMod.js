@@ -79,7 +79,7 @@ function clearWarnings(guildId, userId) {
 
 function findSlur(text, slurs) {
   const lower = text.toLowerCase();
-  return slurs.find((w) => w && lower.includes(w));
+  return slurs.find((w) => w && lower.includes(w)) || null;
 }
 
 function pcmToWav(pcmBuffer, sampleRate = 48000, channels = 2) {
@@ -101,11 +101,41 @@ function pcmToWav(pcmBuffer, sampleRate = 48000, channels = 2) {
   return Buffer.concat([header, pcmBuffer]);
 }
 
-async function transcribeWav(wavBuffer) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not set — voice slur detection needs Whisper');
+/** Convert Discord PCM (48k stereo s16le) → 16k mono float32 for Whisper */
+function pcmToWhisperAudio(pcmBuffer) {
+  const samples = Math.floor(pcmBuffer.length / 2);
+  const input = new Int16Array(pcmBuffer.buffer, pcmBuffer.byteOffset, samples);
+  const frames = Math.floor(samples / 2);
+  const mono48 = new Float32Array(frames);
+  for (let i = 0; i < frames; i++) {
+    const l = input[i * 2] / 32768;
+    const r = input[i * 2 + 1] / 32768;
+    mono48[i] = (l + r) / 2;
   }
+  const outLen = Math.floor(frames / 3);
+  const mono16 = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) mono16[i] = mono48[i * 3];
+  return mono16;
+}
+
+let transcriberPromise = null;
+
+async function getLocalTranscriber() {
+  if (!transcriberPromise) {
+    transcriberPromise = (async () => {
+      const { pipeline, env } = await import('@xenova/transformers');
+      env.allowLocalModels = false;
+      const model = process.env.WHISPER_MODEL || 'Xenova/whisper-tiny.en';
+      console.log(`[voice] Loading local Whisper model: ${model}`);
+      return pipeline('automatic-speech-recognition', model);
+    })();
+  }
+  return transcriberPromise;
+}
+
+async function transcribeOpenAI(wavBuffer) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error('OPENAI_API_KEY missing');
 
   const form = new FormData();
   form.append('model', 'whisper-1');
@@ -117,12 +147,97 @@ async function transcribeWav(wavBuffer) {
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
   });
-
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Whisper failed: ${res.status} ${errText.slice(0, 200)}`);
+    throw new Error(`OpenAI Whisper failed: ${res.status} ${errText.slice(0, 200)}`);
   }
   return (await res.text()).trim();
+}
+
+async function transcribeLocal(pcmBuffer) {
+  const audio = pcmToWhisperAudio(pcmBuffer);
+  if (audio.length < 1600) return ''; // <0.1s
+  const transcriber = await getLocalTranscriber();
+  const result = await transcriber(audio, {
+    sampling_rate: 16000,
+    chunk_length_s: 30,
+    return_timestamps: false,
+  });
+  return (result?.text || '').trim();
+}
+
+async function transcribePcm(pcmBuffer) {
+  const mode = (process.env.VOICE_STT || 'local').toLowerCase();
+  if (mode === 'openai') {
+    return transcribeOpenAI(pcmToWav(pcmBuffer));
+  }
+  // default: local Whisper via transformers.js (works with Ollama setup, no cloud STT)
+  return transcribeLocal(pcmBuffer);
+}
+
+function ollamaConfig() {
+  return {
+    url: (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, ''),
+    model: process.env.OLLAMA_MODEL || 'llama3.2',
+  };
+}
+
+async function ollamaDetectSlur(transcript) {
+  const { url, model } = ollamaConfig();
+  const slurs = getSlurs().join(', ');
+  const prompt = [
+    'You are a Discord voice chat moderator.',
+    `Banned words/examples: ${slurs}`,
+    `Transcript: """${transcript}"""`,
+    'Does the transcript contain a slur, hate speech, or clear severe insult?',
+    'Reply with ONLY JSON like {"hit":true,"word":"n-word"} or {"hit":false,"word":null}',
+    'Be strict on real slurs; ignore mild swearing like damn/hell/shit unless it is a slur.',
+  ].join('\n');
+
+  const res = await fetch(`${url}/api/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      prompt,
+      stream: false,
+      format: 'json',
+      options: { temperature: 0, num_predict: 80 },
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Ollama error ${res.status}: ${(await res.text()).slice(0, 180)}`);
+  }
+
+  const data = await res.json();
+  const raw = data.response || '';
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed.hit && parsed.word) return String(parsed.word);
+    if (parsed.hit) return 'slur';
+    return null;
+  } catch {
+    if (/\bhit\b.*\btrue\b/i.test(raw)) return 'slur';
+    return null;
+  }
+}
+
+async function detectViolation(transcript) {
+  // Fast path: keyword list
+  const keyword = findSlur(transcript, getSlurs());
+  if (keyword) return keyword;
+
+  const provider = (process.env.VOICE_MOD_PROVIDER || 'ollama').toLowerCase();
+  if (provider === 'keywords') return null;
+
+  // Ollama judgment (default)
+  try {
+    return await ollamaDetectSlur(transcript);
+  } catch (err) {
+    console.error('Ollama detect failed, using keywords only:', err.message);
+    return null;
+  }
 }
 
 async function collectUserAudio(receiver, userId) {
@@ -217,7 +332,6 @@ function startListening(guild, connection, textChannel) {
     if (!current?.enabled) return;
     if (current.listening.has(userId)) return;
     if (userId === guild.client.user.id) return;
-    if (!process.env.OPENAI_API_KEY) return;
 
     const member = await guild.members.fetch(userId).catch(() => null);
     if (!member || member.user.bot || isStaff(member)) return;
@@ -231,11 +345,10 @@ function startListening(guild, connection, textChannel) {
       const pcm = await collectUserAudio(receiver, userId);
       if (!pcm.length || pcm.length < 48000) return;
 
-      const wav = pcmToWav(pcm);
-      const transcript = await transcribeWav(wav);
+      const transcript = await transcribePcm(pcm);
       if (!transcript) return;
 
-      const hit = findSlur(transcript, getSlurs());
+      const hit = await detectViolation(transcript);
       if (!hit) return;
 
       await handleStrike(guild, member, hit, transcript, channel);
@@ -248,15 +361,16 @@ function startListening(guild, connection, textChannel) {
 }
 
 async function joinListen(message) {
-  if (!process.env.OPENAI_API_KEY) {
-    return message.reply({
-      content:
-        'Voice slur detection needs `OPENAI_API_KEY` in `.env` (Whisper transcription).\nAdd the key, restart the bot, then run `*vm join` again.',
-    });
-  }
-
   const joined = ensureConnection(message.member);
   if (joined.error) return message.reply({ content: joined.error });
+
+  const { url, model } = ollamaConfig();
+  const stt = (process.env.VOICE_STT || 'local').toLowerCase();
+
+  // Warm local Whisper in background
+  if (stt !== 'openai') {
+    getLocalTranscriber().catch((err) => console.error('Whisper load failed:', err.message));
+  }
 
   startListening(message.guild, joined.connection, message.channel);
   return message.reply({
@@ -266,8 +380,10 @@ async function joinListen(message) {
         .setDescription(
           [
             `Listening in **${joined.channel.name}**.`,
+            `STT: **${stt}** (local Whisper by default)`,
+            `Judge: **Ollama** \`${model}\` @ \`${url}\``,
             `Slurs → warn. **${strikeLimit} warns** → **1 hour** timeout.`,
-            'Staff are ignored. Use `*vm leave` to stop.',
+            'Staff ignored. `*vm leave` to stop.',
           ].join('\n')
         ),
     ],
@@ -284,6 +400,7 @@ function status(message) {
   const session = sessions.get(message.guild.id);
   const conn = getVoiceConnection(message.guild.id);
   const warns = getWarnings(message.guild.id, message.author.id);
+  const { url, model } = ollamaConfig();
   return message.reply({
     embeds: [
       brandEmbed()
@@ -292,7 +409,8 @@ function status(message) {
           [
             `Listening: **${session?.enabled ? 'yes' : 'no'}**`,
             `In VC: **${conn ? 'yes' : 'no'}**`,
-            `Whisper key: **${process.env.OPENAI_API_KEY ? 'set' : 'missing'}**`,
+            `STT: **${process.env.VOICE_STT || 'local'}**`,
+            `Ollama: \`${model}\` @ \`${url}\``,
             `Your strikes: **${warns.count}/${strikeLimit}**`,
             `Banned words loaded: **${getSlurs().length}**`,
           ].join('\n')
@@ -372,7 +490,7 @@ async function handleVoiceModCommand(message, { args, argString }) {
       '`*vm clear @user` — clear strikes',
       '`*vm addword <word>` / `*vm words`',
       '',
-      'Needs `OPENAI_API_KEY` in `.env`. 3 strikes → 1h timeout.',
+      'Needs Ollama running locally (and first-time Whisper model download). 3 strikes → 1h timeout.',
     ].join('\n'),
   });
 }

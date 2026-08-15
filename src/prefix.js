@@ -97,7 +97,7 @@ const commands = {
               '**Voice mod (slurs)**',
               `\`${PREFIX}vm join\` — listen in your VC`,
               `\`${PREFIX}vm leave\` · \`${PREFIX}vm status\` · \`${PREFIX}vm warnings\``,
-              '3 voice warns → 1 hour timeout (needs `OPENAI_API_KEY`)',
+              '3 voice warns → 1 hour timeout (local Whisper + Ollama)',
               '',
               'Slash commands still work (`/welcome`, `/ticket`, …).',
             ].join('\n')
