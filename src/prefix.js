@@ -2,7 +2,7 @@ const { PermissionFlagsBits } = require('discord.js');
 const { setAfk, getAfk, clearAfk, formatSince } = require('./afk');
 const { brandEmbed, BRAND } = require('./welcome');
 const music = require('./music');
-const { handleVoiceModCommand } = require('./voiceMod');
+const { handleVoiceModCommand, joinListen } = require('./voiceMod');
 
 const PREFIX = '*';
 
@@ -92,11 +92,11 @@ const commands = {
               '**Music**',
               `\`${PREFIX}play <song/url>\` · \`${PREFIX}skip\` · \`${PREFIX}stop\``,
               `\`${PREFIX}pause\` · \`${PREFIX}resume\` · \`${PREFIX}queue\` · \`${PREFIX}np\``,
-              `\`${PREFIX}leave\` — leave voice`,
               '',
-              '**Voice mod (slurs)**',
-              `\`${PREFIX}vm join\` — listen in your VC`,
-              `\`${PREFIX}vm leave\` · \`${PREFIX}vm status\` · \`${PREFIX}vm warnings\``,
+              '**Voice**',
+              `\`${PREFIX}join\` — join your VC and listen`,
+              `\`${PREFIX}leave\` — leave voice`,
+              `\`${PREFIX}vm join\` · \`${PREFIX}vm leave\` · \`${PREFIX}vm status\` · \`${PREFIX}vm warnings\``,
               '3 voice warns → 1 hour timeout (local Whisper + Ollama)',
               '',
               'Slash commands still work (`/welcome`, `/ticket`, …).',
@@ -189,6 +189,9 @@ const commands = {
   async np(message) {
     return music.nowPlaying(message);
   },
+  async join(message) {
+    return joinListen(message);
+  },
   async leave(message) {
     return music.leave(message);
   },
@@ -207,6 +210,7 @@ commands.av = commands.avatar;
 commands.whois = commands.userinfo;
 commands.ui = commands.userinfo;
 commands.si = commands.serverinfo;
+commands.j = commands.join;
 commands.s = commands.skip;
 commands.q = commands.queue;
 
@@ -273,4 +277,5 @@ module.exports = {
   handlePrefixCommands,
   handleAfkPassive,
   parseCommand,
+  commands,
 };

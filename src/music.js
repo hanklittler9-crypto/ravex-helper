@@ -4,9 +4,22 @@ const {
   createAudioResource,
   AudioPlayerStatus,
   getVoiceConnection,
+  entersState,
+  VoiceConnectionStatus,
 } = require('@discordjs/voice');
+const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const play = require('play-dl');
 const { brandEmbed } = require('./welcome');
+
+try {
+  const ffmpegPath = require('ffmpeg-static');
+  if (ffmpegPath) {
+    process.env.FFMPEG_PATH = ffmpegPath;
+    process.env.FFMPEG_BIN = ffmpegPath;
+  }
+} catch {
+  // ffmpeg-static is optional for voice receive; required for music
+}
 
 /** @type {Map<string, { queue: object[], player: import('@discordjs/voice').AudioPlayer, textChannelId: string|null, playing: object|null }>} */
 const guildPlayers = new Map();
@@ -29,24 +42,123 @@ function getStore(guildId) {
   return guildPlayers.get(guildId);
 }
 
-function ensureConnection(member) {
-  const channel = member.voice?.channel;
-  if (!channel) {
-    return { error: 'Join a voice channel first.' };
-  }
-  const existing = getVoiceConnection(member.guild.id);
-  if (existing) {
-    existing.subscribe(getStore(member.guild.id).player);
-    return { connection: existing, channel };
-  }
-  const connection = joinVoiceChannel({
-    channelId: channel.id,
-    guildId: channel.guild.id,
-    adapterCreator: channel.guild.voiceAdapterCreator,
-    selfDeaf: false,
-    selfMute: false,
+function attachConnectionHandlers(connection) {
+  if (connection._ravexHandlers) return;
+  connection._ravexHandlers = true;
+
+  connection.on('error', (err) => {
+    console.error('Voice connection error:', err.message);
   });
-  connection.subscribe(getStore(member.guild.id).player);
+
+  connection.on(VoiceConnectionStatus.Disconnected, async () => {
+    try {
+      await Promise.race([
+        entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+        entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+      ]);
+    } catch {
+      try {
+        connection.destroy();
+      } catch {
+        // already destroyed
+      }
+    }
+  });
+}
+
+function voiceChannelOf(member) {
+  return member.voice?.channel || member.guild.voiceStates.cache.get(member.id)?.channel || null;
+}
+
+async function waitUntilReady(connection) {
+  if (connection.state.status === VoiceConnectionStatus.Ready) return;
+  await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+}
+
+function joinFailedMessage(err) {
+  const detail = err?.message ? ` (${err.message})` : '';
+  return (
+    `Could not join the voice channel${detail}. Discord voice never became ready. ` +
+    'Sit in a VC, make sure the bot has **Connect** + **Speak**, and if you host on Render/cloud, run the bot on a VPS or your PC (voice needs UDP).'
+  );
+}
+
+async function ensureConnection(member) {
+  const channel = voiceChannelOf(member);
+  if (!channel) {
+    return { error: 'Join a voice channel first, then run `*join` (or `*vm join`).' };
+  }
+
+  const me = channel.guild.members.me;
+  const perms = channel.permissionsFor(me);
+  if (perms && (!perms.has(PermissionFlagsBits.Connect) || !perms.has(PermissionFlagsBits.Speak))) {
+    return { error: `I need **Connect** and **Speak** in **${channel.name}**.` };
+  }
+
+  const player = getStore(member.guild.id).player;
+  let existing = getVoiceConnection(member.guild.id);
+  if (
+    existing &&
+    (existing.state.status === VoiceConnectionStatus.Destroyed ||
+      existing.state.status === VoiceConnectionStatus.Disconnected)
+  ) {
+    try {
+      existing.destroy();
+    } catch {
+      // ignore
+    }
+    existing = null;
+  }
+
+  if (existing) {
+    const sameChannel = existing.joinConfig?.channelId === channel.id;
+    if (!sameChannel) {
+      try {
+        existing.rejoin({
+          channelId: channel.id,
+          selfDeaf: false,
+          selfMute: false,
+        });
+      } catch {
+        try {
+          existing.destroy();
+        } catch {
+          // ignore
+        }
+        existing = null;
+      }
+    }
+  }
+
+  const connection =
+    existing ||
+    joinVoiceChannel({
+      channelId: channel.id,
+      guildId: channel.guild.id,
+      adapterCreator: channel.guild.voiceAdapterCreator,
+      selfDeaf: false,
+      selfMute: false,
+      decryptionFailureTolerance: 32,
+    });
+
+  attachConnectionHandlers(connection);
+  connection.subscribe(player);
+
+  try {
+    await waitUntilReady(connection);
+  } catch (err) {
+    try {
+      connection.destroy();
+    } catch {
+      // ignore
+    }
+    return { error: joinFailedMessage(err) };
+  }
+
+  if (channel.type === ChannelType.GuildStageVoice) {
+    await me?.voice?.setSuppressed(false).catch(() => null);
+  }
+
   return { connection, channel };
 }
 
@@ -90,7 +202,7 @@ async function playNext(guildId) {
 async function enqueue(message, query) {
   if (!query) return message.reply({ content: 'Usage: `*play <song or url>`' });
 
-  const joined = ensureConnection(message.member);
+  const joined = await ensureConnection(message.member);
   if (joined.error) return message.reply({ content: joined.error });
 
   const store = getStore(message.guild.id);

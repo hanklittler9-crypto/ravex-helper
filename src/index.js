@@ -18,6 +18,30 @@ const { openTicket, closeTicket, claimTicket, brandEmbed, BRAND } = require('./t
 const { sendWelcome, sendLeave, handleWelcomeInteraction } = require('./welcome');
 const { handlePrefixCommands, handleAfkPassive, PREFIX } = require('./prefix');
 
+try {
+  const ffmpegPath = require('ffmpeg-static');
+  if (ffmpegPath) {
+    process.env.FFMPEG_PATH = ffmpegPath;
+    process.env.FFMPEG_BIN = ffmpegPath;
+  }
+} catch {
+  // music/voice still start; FFmpeg missing will only break playback
+}
+
+function logVoiceDeps() {
+  try {
+    require('@snazzah/davey');
+  } catch (err) {
+    console.error('DAVE (@snazzah/davey) failed to load — Discord voice will not work:', err.message);
+  }
+  try {
+    const { generateDependencyReport } = require('@discordjs/voice');
+    console.log(generateDependencyReport());
+  } catch (err) {
+    console.error('Voice dependency report failed:', err.message);
+  }
+}
+
 ensureDataFiles();
 
 const token = process.env.DISCORD_TOKEN;
@@ -62,8 +86,9 @@ for (const command of commands) {
 
 client.once(Events.ClientReady, async (c) => {
   console.log(`${BRAND.name} online as ${c.user.tag}`);
-  c.user.setActivity(`${PREFIX}help · tickets & welcomes`, { type: ActivityType.Watching });
+  c.user.setActivity(`${PREFIX}join · ${PREFIX}help`, { type: ActivityType.Watching });
   setPersistenceClient(c);
+  logVoiceDeps();
 
   try {
     await restoreFromDiscord(c);

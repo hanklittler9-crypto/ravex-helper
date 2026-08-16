@@ -21,7 +21,7 @@ Discord welcomer + modmail/ticket bot.
 2. Under **Bot**, enable:
    - Server Members Intent
    - Message Content Intent
-3. Invite the bot with scopes `bot` + `applications.commands` and permissions: Manage Channels, Manage Roles, Send Messages, Embed Links, Attach Files, Read Message History, View Channels
+3. Invite the bot with scopes `bot` + `applications.commands` and permissions: Manage Channels, Manage Roles, Send Messages, Embed Links, Attach Files, Read Message History, View Channels, **Connect**, **Speak**, **Timeout Members**
 4. Copy `.env.example` → `.env` and fill in:
 
 ```
@@ -63,6 +63,18 @@ Also available:
 | `/ticket panel` | Post Open Ticket button |
 | `/ticket open` / `close` / `add` / `remove` | Ticket tools |
 | `/help` | Command list |
+| `*join` / `/join` | Join **your** voice channel and listen |
+| `*leave` | Leave voice |
+| `*vm join` | Same as `*join` |
+| `*play <song>` | Also joins your VC to play music |
+
+**Voice:** sit in a voice channel first, then run:
+
+```
+*join
+```
+
+(`*vm join` and `/join` do the same thing.) The bot will hop into that VC. If it never appears, it needs **Connect** + **Speak**, and the host must allow Discord voice UDP (a VPS or your PC — Render often cannot).
 
 **Modmail:** users DM the bot → a ticket opens. Staff replies in that ticket are forwarded back to the user’s DMs.
 
