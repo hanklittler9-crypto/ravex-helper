@@ -320,6 +320,10 @@ function startListening(guild, connection, textChannel) {
   const session = sessions.get(guild.id) || { enabled: true, listening: new Set(), hooked: false };
   session.enabled = true;
   session.textChannelId = textChannel?.id || session.textChannelId;
+  if (session.connection !== connection) {
+    session.hooked = false;
+    session.connection = connection;
+  }
   sessions.set(guild.id, session);
 
   if (session.hooked) return;
@@ -360,34 +364,43 @@ function startListening(guild, connection, textChannel) {
   });
 }
 
-async function joinListen(message) {
-  const joined = ensureConnection(message.member);
-  if (joined.error) return message.reply({ content: joined.error });
-
+function joinSuccessPayload(channel) {
   const { url, model } = ollamaConfig();
   const stt = (process.env.VOICE_STT || 'local').toLowerCase();
+  return {
+    embeds: [
+      brandEmbed()
+        .setTitle('Joined voice')
+        .setDescription(
+          [
+            `Connected to **${channel.name}** and listening.`,
+            `STT: **${stt}** (local Whisper by default)`,
+            `Judge: **Ollama** \`${model}\` @ \`${url}\``,
+            `Slurs → warn. **${strikeLimit} warns** → **1 hour** timeout.`,
+            'Staff ignored. `*leave` or `*vm leave` to stop.',
+          ].join('\n')
+        ),
+    ],
+  };
+}
 
-  // Warm local Whisper in background
+async function joinVoiceMod(member, textChannel) {
+  const joined = await ensureConnection(member);
+  if (joined.error) return { error: joined.error };
+
+  const stt = (process.env.VOICE_STT || 'local').toLowerCase();
   if (stt !== 'openai') {
     getLocalTranscriber().catch((err) => console.error('Whisper load failed:', err.message));
   }
 
-  startListening(message.guild, joined.connection, message.channel);
-  return message.reply({
-    embeds: [
-      brandEmbed()
-        .setTitle('Voice moderation on')
-        .setDescription(
-          [
-            `Listening in **${joined.channel.name}**.`,
-            `STT: **${stt}** (local Whisper by default)`,
-            `Judge: **Ollama** \`${model}\` @ \`${url}\``,
-            `Slurs → warn. **${strikeLimit} warns** → **1 hour** timeout.`,
-            'Staff ignored. `*vm leave` to stop.',
-          ].join('\n')
-        ),
-    ],
-  });
+  startListening(member.guild, joined.connection, textChannel);
+  return { channel: joined.channel };
+}
+
+async function joinListen(message) {
+  const result = await joinVoiceMod(message.member, message.channel);
+  if (result.error) return message.reply({ content: result.error });
+  return message.reply(joinSuccessPayload(result.channel));
 }
 
 async function leaveListen(message) {
@@ -483,8 +496,8 @@ async function handleVoiceModCommand(message, { args, argString }) {
   return message.reply({
     content: [
       '**Voice mod commands**',
-      '`*vm join` — join your VC and listen for slurs',
-      '`*vm leave` — stop listening',
+      '`*join` / `*vm join` — join your VC and listen for slurs',
+      '`*leave` / `*vm leave` — leave / stop listening',
       '`*vm status` — status',
       '`*vm warnings [@user]` — strikes',
       '`*vm clear @user` — clear strikes',
@@ -498,5 +511,7 @@ async function handleVoiceModCommand(message, { args, argString }) {
 module.exports = {
   handleVoiceModCommand,
   joinListen,
+  joinVoiceMod,
+  joinSuccessPayload,
   getSlurs,
 };

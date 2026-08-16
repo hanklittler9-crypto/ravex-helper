@@ -23,6 +23,7 @@ const {
   variablesEmbed,
   DEFAULT_WELCOME,
 } = require('./welcome');
+const { joinVoiceMod, joinSuccessPayload } = require('./voiceMod');
 
 const commands = [
   {
@@ -628,11 +629,33 @@ const commands = [
                 '`/ticket close` · `/ticket add` · `/ticket remove`',
                 '',
                 'DM the bot to open modmail.',
+                '',
+                '**Voice**',
+                '`*join` or `/join` — sit in a VC first, then run this',
+                '`*leave` · `*vm status` · `*vm warnings`',
               ].join('\n')
             ),
         ],
         ephemeral: true,
       });
+    },
+  },
+  {
+    data: new SlashCommandBuilder()
+      .setName('join')
+      .setDescription('Join your voice channel and start listening'),
+    async execute(interaction) {
+      const member = interaction.member;
+      if (!member?.voice?.channel) {
+        return interaction.reply({
+          content: 'Join a voice channel first, then run `/join` (or `*join`).',
+          ephemeral: true,
+        });
+      }
+      await interaction.deferReply();
+      const result = await joinVoiceMod(member, interaction.channel);
+      if (result.error) return interaction.editReply({ content: result.error });
+      return interaction.editReply(joinSuccessPayload(result.channel));
     },
   },
 ];
